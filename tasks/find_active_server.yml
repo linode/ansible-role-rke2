@@ -7,10 +7,8 @@
 
 - name: Set the Active Server variable
   ansible.builtin.set_fact:
-    active_server: "{{ inventory_hostname }}"
-  delegate_facts: true
-  delegate_to: "{{ item }}"
-  with_items: "{{ groups[rke2_cluster_group_name] }}"
-  when:
-    - inventory_hostname in groups[rke2_servers_group_name]
-    - ansible_facts.services["rke2-server.service"].state == "running"
+    active_server: "{{ active_servers | first }}"
+  vars:
+    query: "[?value.ansible_facts.services.\"rke2-server.service\".state == 'running' && contains(value.group_names, '{{ rke2_servers_group_name }}')].key"
+    # requires Python jmespath module
+    active_servers: "{{ hostvars | dict2items | community.general.json_query(query) }}"
