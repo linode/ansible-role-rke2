@@ -1,5 +1,7 @@
 ---
 
+active_server: "{{ groups['rke2_active_servers'] | first | default(None) }}"
+
 # RKE2 installation method (do not change this option)
 rke2_method: tar
 rke2_service_name: "rke2-{{ rke2_type }}.service"

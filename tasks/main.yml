@@ -16,11 +16,6 @@
   when:
     - rke2_cis_profile | length > 0
 
-- name: Find Active Server
-  ansible.builtin.include_tasks: find_active_server.yml
-  when:
-    - rke2_ha_mode | bool
-
 - name: Enable IPVS kernel module
   community.general.modprobe:
     name: ip_vs
@@ -73,8 +68,6 @@
   when:
     - rke2_restart_allowed
     - rke2_restart_needed
-    - installed_version != "not installed"
-    - rke2_version != running_version
 
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
