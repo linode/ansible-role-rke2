@@ -10,13 +10,16 @@
     state: restarted
     name: systemd-sysctl
 
-- name: Flush handlers
-  ansible.builtin.meta: flush_handlers
-
 - name: Config file changed
   ansible.builtin.set_fact:
     rke2_restart_needed: true
 
+- name: RKE2 version changed
+  ansible.builtin.set_fact:
+    rke2_restart_needed: true
+    rke2_version_changed: true
+
 - name: Service (re)started
   ansible.builtin.set_fact:
     rke2_restart_needed: false
+    rke2_version_changed: false
