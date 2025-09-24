@@ -22,15 +22,15 @@ The Role can install the RKE2 in 3 modes:
 
 > It is possible to upgrade RKE2 by changing `rke2_version` variable and re-running the playbook with this role. During the upgrade process the RKE2 service on the nodes will be restarted one by one. The Ansible Role will check if the node on which the service was restarted is in Ready state and only then proceed with restarting service on another Kubernetes node.
 
-## Requirements
+## Requirements for Anisble Controller
 
 * Ansible 2.10+
+* `netaddr` Python package
 
 ## Tested on
 
-* Rocky Linux 8
-* Ubuntu 20.04 LTS
-* Ubuntu 22.04 LTS
+* Rocky Linux 9
+* Ubuntu 24.04 LTS
 
 ## Role Variables
 
@@ -38,8 +38,14 @@ This is a copy of `defaults/main.yml`
 
 ```yaml
 ---
+# Determines whether downgrades of the RKE2 version are allowed.
+# If set to `false`, the role will prevent downgrades unless explicitly permitted.
+# Set to `true` to allow downgrades of the RKE2 version.
+# Note: This setting is ignored in Ansible check mode, and the related prevention task will be skipped.
+rke2_allow_downgrade: false
+
 # The node type - server or agent
-rke2_type: server
+rke2_type: "{{ 'server' if inventory_hostname in groups[rke2_servers_group_name] else 'agent' if inventory_hostname in groups[rke2_agents_group_name] }}"
 
 # Deploy the control plane in HA mode
 rke2_ha_mode: false
@@ -55,10 +61,11 @@ rke2_ha_mode_kubevip: false
 # Kubernetes API and RKE2 registration IP address. The default Address is the IPv4 of the Server/Master node.
 # In HA mode choose a static IP which will be set as VIP in keepalived.
 # Or if the keepalived is disabled, use IP address of your LB.
-rke2_api_ip: "{{ hostvars[groups[rke2_servers_group_name].0]['ansible_default_ipv4']['address'] }}"
+rke2_api_ip: "{{ hostvars[groups[rke2_servers_group_name].0]['ansible_default_ipv4']['address'] | default(hostvars[groups[rke2_servers_group_name].0]['ansible_default_ipv6']['address'] ) }}"
 
-# optional option for RKE2 Server to listen on a private IP address on port 9345
+# optional option for RKE2 Server to listen on a private IP address & port
 # rke2_api_private_ip:
+rke2_api_private_port: 9345
 
 # optional option for kubevip IP subnet
 # rke2_api_cidr: 24
@@ -80,10 +87,10 @@ rke2_kubevip_cloud_provider_enable: true
 rke2_kubevip_svc_enable: true
 
 # Specify which image is used for kube-vip container
-rke2_kubevip_image: ghcr.io/kube-vip/kube-vip:v0.6.4
+rke2_kubevip_image: ghcr.io/kube-vip/kube-vip:v0.9.2
 
 # Specify which image is used for kube-vip cloud provider container
-rke2_kubevip_cloud_provider_image: ghcr.io/kube-vip/kube-vip-cloud-provider:v0.0.4
+rke2_kubevip_cloud_provider_image: ghcr.io/kube-vip/kube-vip-cloud-provider:v0.0.12
 
 # Enable kube-vip IPVS load balancer for control plane
 rke2_kubevip_ipvs_lb_enable: false
@@ -96,6 +103,12 @@ rke2_kubevip_service_election_enable: true
 # instead of one node becoming the leader for all services an election is held across all kube-vip instances and the leader from that election becomes the holder of that service. Ultimately,
 # this means that every service can end up on a different node when it is created in theory preventing a bottleneck in the initial deployment.
 # minimum kube-vip version 0.5.0
+
+# (Optional) Change parameters for leader election - see upstream install flags link below
+# rke2_kubevip_leaseduration: 5
+# rke2_kubevip_renewdeadline: 3
+# rke2_kubevip_retryperiod: 1
+# rke2_kubevip_loglevel: 4
 
 # (Optional) A list of kube-vip flags
 # All flags can be found here https://kube-vip.io/docs/installation/flags/
@@ -110,6 +123,9 @@ rke2_kubevip_metrics_port: 2112
 
 # Add additional SANs in k8s API TLS cert
 rke2_additional_sans: []
+
+# Configure cluster domain
+# rke2_cluster_domain: cluster.example.net
 
 # API Server destination port
 rke2_apiserver_dest_port: 6443
@@ -149,6 +165,9 @@ rke2_artifact:
   - rke2.linux-{{ rke2_architecture }}.tar.gz
   - rke2-images.linux-{{ rke2_architecture }}.tar.zst
 
+# Timeout for fetching artifacts in seconds
+rke2_artifact_fetch_timeout: 30
+
 # Changes the deploy strategy to install based on local artifacts
 rke2_airgap_mode: false
 
@@ -165,7 +184,7 @@ rke2_airgap_copy_sourcepath: local_artifacts
 # (File extensions in the list and on the real files must be retained)
 rke2_airgap_copy_additional_tarballs: []
 
-# Destination for airgap additional images tarballs ( see https://docs.rke2.io/install/airgap/#tarball-method )
+# Destination for airgap additional images tarballs ( see https://docs.rke2.io/install/airgap#tarball-method )
 rke2_tarball_images_path: "{{ rke2_data_path }}/agent/images"
 
 # Architecture to be downloaded, currently there are releases for amd64 and s390x
@@ -179,12 +198,14 @@ rke2_channel: stable
 
 # Do not deploy packaged components and delete any deployed components
 # Valid items: rke2-canal, rke2-coredns, rke2-ingress-nginx, rke2-metrics-server
-rke2_disable:
+rke2_disable: []
 
 # Option to disable kube-proxy
 disable_kube_proxy: false
 
-# Option to disable builtin cloud controller - mostly for onprem
+# Option to disable builtin cloud controller when working with aws, azure, gce etc
+# For onprem environment, this should remain false and keep rke2_cloud_provider_name as "external"
+# https://docs.k3s.io/networking/networking-services#deploying-an-external-cloud-controller-manager (same for RKE2)
 rke2_disable_cloud_controller: false
 
 # Cloud provider to use for the cluster (aws, azure, gce, openstack, vsphere, external)
@@ -193,10 +214,10 @@ rke2_cloud_provider_name: "external"
 
 # Path to custom manifests deployed during the RKE2 installation
 # It is possible to use Jinja2 templating in the manifests
-rke2_custom_manifests:
+rke2_custom_manifests: []
 
 # Path to static pods deployed during the RKE2 installation
-rke2_static_pods:
+rke2_static_pods: []
 
 # Configure custom Containerd Registry
 rke2_custom_registry_mirrors: []
@@ -223,7 +244,7 @@ rke2_etcd_snapshot_source_dir: etcd_snapshots
 # The etcd will be restored only during the initial run, so even if you will leave the the file name specified,
 # the etcd will remain untouched during the next runs.
 # You can either use this or set options in `rke2_etcd_snapshot_s3_options`
-rke2_etcd_snapshot_file:
+rke2_etcd_snapshot_file: ""
 
 # Etcd snapshot location
 rke2_etcd_snapshot_destination_dir: "{{ rke2_data_path }}/server/db/snapshots"
@@ -242,13 +263,14 @@ rke2_etcd_snapshot_destination_dir: "{{ rke2_data_path }}/server/db/snapshots"
   # region: "" # optional - defaults to us-east-1
   # folder: "" # optional - defaults to top level of bucket
 # Override default containerd snapshotter
-rke2_snapshooter: overlayfs
+rke2_snapshotter: "{{ rke2_snapshooter }}"
+rke2_snapshooter: overlayfs # legacy variable that only exists to keep backward compatibility with previous configurations
 
 # Deploy RKE2 with default CNI canal
-rke2_cni: canal
+rke2_cni: [canal]
 
 # Validate system configuration against the selected benchmark
-# (Supported value is "cis-1.23" or eventually "cis-1.6" if you are running RKE2 prior 1.25)
+# (Supported value is "cis-1.23" or eventually "cis-1.6" if you are running RKE2 prior 1.25 or "cis" for rke2 1.30+)
 rke2_cis_profile: ""
 
 # Download Kubernetes config file to the Ansible controller
@@ -304,6 +326,9 @@ rke2_agents_group_name: workers
 # rke2_kube_scheduler_arg:
 #   - "bind-address=0.0.0.0"
 
+# Configure Ingress Controller (allowed values: ingress-nginx, traefik, none)
+rke2_ingress_controller: ingress-nginx
+
 # (Optional) Configure nginx via HelmChartConfig: https://docs.rke2.io/networking/networking_services#nginx-ingress-controller
 # rke2_ingress_nginx_values:
 #   controller:
@@ -313,12 +338,28 @@ rke2_ingress_nginx_values: {}
 
 # Cordon, drain the node which is being upgraded. Uncordon the node once the RKE2 upgraded
 rke2_drain_node_during_upgrade: false
+# Additional args that will be passed to the kubectl drain command e.g. --pod-selector
+rke2_drain_additional_args: ""
 
-# Wait for all pods to be ready after rke2-service restart during rolling restart.
+# Wait for all pods to be have a status of running or succeeded after rke2-service restart during rolling restart.
 rke2_wait_for_all_pods_to_be_ready: false
+# Wait for all pods to be ready after rke2-service restart during rolling restart.
+# Named "healthy" to keep backwards compatibility with existing variable names.
+rke2_wait_for_all_pods_to_be_healthy: false
+# The args passed to the kubectl wait command
+rke2_wait_for_all_pods_to_be_healthy_args: --for=condition=Ready -A --all pod --field-selector=metadata.namespace!=kube-system,status.phase!=Succeeded
 
 # Enable debug mode (rke2-service)
 rke2_debug: false
+
+# (Optional) Customize kubelet config using KubeletConfiguration - https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
+# rke2_kubelet_config:
+#   imageGCHighThresholdPercent: 80
+#   imageGCLowThresholdPercent: 70
+# Note that you also need to add the following to kubelet args:
+# rke2_kubelet_arg:
+#   - "--config=/etc/rancher/rke2/kubelet-config.yaml"
+rke2_kubelet_config: {}
 
 # (Optional) Customize default kubelet arguments
 # rke2_kubelet_arg:
@@ -328,8 +369,24 @@ rke2_debug: false
 # rke2_kube_proxy_arg:
 #   - "proxy-mode=ipvs"
 
+# (Optional) Customize default kube-proxy extra mounts
+# rke2_kube_proxy_extra_mount:
+#   - "/lib/modules:/lib/modules:ro"
+
 # The value for the node-name configuration item
 rke2_node_name: "{{ inventory_hostname }}"
+
+# default pod network range for rke2
+rke2_cluster_cidr:
+  - 10.42.0.0/16
+
+# default service network range for rke2
+rke2_service_cidr:
+  - 10.43.0.0/16
+
+# Enable SELinux for rke2
+rke2_selinux: false
+
 ```
 
 ## Inventory file example
@@ -339,14 +396,14 @@ The RKE2 Kubernetes master/server nodes must belong to `masters` group and worke
 
 ```ini
 [masters]
-master-01 ansible_host=192.168.123.1 rke2_type=server
-master-02 ansible_host=192.168.123.2 rke2_type=server
-master-03 ansible_host=192.168.123.3 rke2_type=server
+master-01 ansible_host=192.168.123.1
+master-02 ansible_host=192.168.123.2
+master-03 ansible_host=192.168.123.3
 
 [workers]
-worker-01 ansible_host=192.168.123.11 rke2_type=agent
-worker-02 ansible_host=192.168.123.12 rke2_type=agent
-worker-03 ansible_host=192.168.123.13 rke2_type=agent
+worker-01 ansible_host=192.168.123.11
+worker-02 ansible_host=192.168.123.12
+worker-03 ansible_host=192.168.123.13
 
 [k8s_cluster:children]
 masters
@@ -443,6 +500,10 @@ While changing server token is problematic, agent token can be rotated at will, 
 If the playbook starts to hang at the `Start RKE2 service on the rest of the nodes` task and then fails at the `Wait for remaining nodes to be ready` task, you probably have some limitations on you nodes' network.
 
 Please check the required *Inbound Rules for RKE2 Server Nodes* at the following link: <https://docs.rke2.io/install/requirements/#networking>.
+
+### RKE2 upgrade playbook failed due to an interrupted upgrade
+
+In case the new RKE2 version was installed but not started, rerun the playbook with the variable `rke2_allow_downgrade: true` to bypass the downgrade prevention check.
 
 ## License
 
