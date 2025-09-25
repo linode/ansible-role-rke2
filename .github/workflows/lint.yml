@@ -7,21 +7,17 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
     steps:
       - name: checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          path: "${{ github.repository }}"
-      - name: Molecule for Ansible - lint
-        uses: MonolithProjects/action-molecule@v1.4.3
-        with:
-          molecule_command: lint
+          path: 'lablabs.rke2'
 
       - name: Set up Python 3
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
@@ -29,5 +25,5 @@ jobs:
         run: pip3 install ansible-lint
 
       - name: Run ansible-lint
-        run: ansible-lint --profile production .
+        run: ansible-lint --profile production ./tasks
         working-directory: ./lablabs.rke2
